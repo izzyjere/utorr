@@ -213,7 +213,7 @@ func main() {
 	)
 
 	flag.StringVar(&outDir, "o", "/utorr/downloads", "Output/download directory")
-	flag.StringVar(&sessionDir, "/utorr/session", "session", "Directory to store session/resume data")
+	flag.StringVar(&sessionDir, "session", "/utorr/session", "Directory to store session/resume data")
 	flag.IntVar(&maxConns, "max-conns", 80, "Max established peer connections per torrent")
 	flag.BoolVar(&enableSeed, "seed", false, "Seed after download completes")
 	flag.BoolVar(&disableUTP, "disable-utp", false, "Disable uTP (Micro Transport Protocol)")
