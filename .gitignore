@@ -1,0 +1,17 @@
+# Binaries
+builds/
+utorr
+utorr.exe
+
+# Torrent Data
+downloads/
+session/
+
+# IDE settings
+.idea/
+
+# Go artifacts
+vendor/
+*.test
+*.out
+cover.out
