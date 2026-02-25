@@ -181,21 +181,26 @@ func (m *torrentModel) View() string {
 	statusText := "RUNNING"
 	if m.paused {
 		statusText = "PAUSED"
+	} else if overall >= 1.0 {
+		statusText = "COMPLETED"
 	}
 
 	s.WriteString(strings.Repeat("─", m.width))
 	s.WriteString("\n")
 	s.WriteString(fmt.Sprintf("TOTAL: %3.0f%%  D: %s/s  U: %s/s\n",
 		overall*100, humanBytes(int64(totalDownRate)), humanBytes(int64(totalUpRate))))
-	s.WriteString(fmt.Sprintf("Status: %s\n", statusStyle.Foreground(lipgloss.Color(statusColor(m.paused))).Render(statusText)))
+	s.WriteString(fmt.Sprintf("Status: %s\n", statusStyle.Foreground(lipgloss.Color(statusColor(m.paused, overall >= 1.0))).Render(statusText)))
 	s.WriteString(infoStyle.Render("\n[p]ause/resume  [q]uit"))
 
 	return s.String()
 }
 
-func statusColor(paused bool) string {
+func statusColor(paused bool, completed bool) string {
 	if paused {
 		return "#FFFF00" // Yellow
+	}
+	if completed {
+		return "#00FFFF" // Cyan (or another color for completed)
 	}
 	return "#00FF00" // Green
 }
@@ -254,7 +259,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed creating client: %v", err)
 	}
-	defer cl.Close()
+	// Note: We'll close this client explicitly at the end of main() to ensure all data is flushed.
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -298,6 +303,10 @@ func main() {
 
 	// Ensure graceful shutdown
 	fmt.Println("Shutting down gracefully, flushing data...")
+
+	// Explicitly close the client before returning to ensure all data is flushed to disk.
+	cl.Close()
+	fmt.Println("Done.")
 }
 
 func mustMkdirAll(p string) {
