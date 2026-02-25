@@ -65,7 +65,7 @@ During download:
 - `q`: Quit gracefully (state is saved)
 
 ### Demo
-![img.png](img.png)
+![img_1.png](img_1.png)
 
 ### What's Next?
 1. Integration with a web UI for remote control
