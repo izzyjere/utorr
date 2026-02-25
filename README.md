@@ -16,11 +16,23 @@ make
 
 ## Usage
 
-Use the compiled binary for the best performance (avoids compilation delay):
+For best performance and a clean UI, use the compiled binary:
 
 ```bash
-./builds/utorr -o downloads "magnet:?xt=urn:btih:..."
+# Build (one-time or after changes)
+make
+
+# Run
+./builds/utorr [options] <magnet|file>
 ```
+
+### UI & Performance Notes
+
+- **Full TUI**: The downloader now features a proper Terminal User Interface (TUI) with real-time progress bars, per-torrent stats, and global download/upload rates.
+- **Interactive Commands**:
+  - `p`: Toggle **Pause/Resume** (instant, no Enter required).
+  - `q`: **Quit** gracefully (instant, no Enter required).
+- **WSL/Linux Performance**: If you are using WSL, running the binary from a Windows mount (`/mnt/c/...`) can be significantly slower due to filesystem interop. For the fastest startup, move the project to the native Linux filesystem (e.g., `~/utorr`).
 
 ### Options
 

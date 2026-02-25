@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -18,13 +17,51 @@ import (
 
 	"github.com/anacrolix/torrent"
 	"github.com/anacrolix/torrent/metainfo"
+	"github.com/charmbracelet/bubbles/progress"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
+// --- Bubble Tea TUI ---
+
 var (
-	rateMu   sync.Mutex
-	ratePrev = map[*torrent.Torrent]rateState{}
-	paused   bool
+	titleStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#FAFAFA")).
+			Background(lipgloss.Color("#7D56F4")).
+			Padding(0, 1).
+			MarginBottom(1)
+
+	infoStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#626262"))
+
+	errorStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FF0000"))
+
+	statusStyle = lipgloss.NewStyle().
+			Bold(true)
 )
+
+type tickMsg time.Time
+
+func tick() tea.Cmd {
+	return tea.Every(time.Second, func(t time.Time) tea.Msg {
+		return tickMsg(t)
+	})
+}
+
+type torrentModel struct {
+	client   *torrent.Client
+	torrents []*torrent.Torrent
+	paused   bool
+	err      error
+	quitting bool
+	width    int
+
+	ratePrev map[*torrent.Torrent]rateState
+	progress progress.Model
+	mu       sync.Mutex
+}
 
 type rateState struct {
 	t time.Time
@@ -32,18 +69,139 @@ type rateState struct {
 	w int64
 }
 
-// Simple, secure-ish, multi-torrent CLI downloader using anacrolix/torrent.
-// Features:
-//   - Accept magnet links or .torrent files as arguments
-//   - Multi-threaded piece downloading (handled by library)
-//   - Progress monitoring per torrent and overall
-//   - Pause/Resume: interactive commands in the terminal (p=toggle pause, q=quit),
-//     and automatic resume on next run thanks to persistent session and data dirs
-//   - Safe defaults (no seeding by default, limited opens, conservative networking)
-//
-// Example:
-//
-//	utorr -o downloads "magnet:?xt=urn:btih:..." file.torrent
+func (m *torrentModel) Init() tea.Cmd {
+	return tick()
+}
+
+func (m *torrentModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "q", "ctrl+c":
+			m.quitting = true
+			return m, tea.Quit
+		case "p":
+			m.mu.Lock()
+			m.paused = !m.paused
+			for _, t := range m.torrents {
+				if m.paused {
+					t.DisallowDataDownload()
+				} else {
+					t.AllowDataDownload()
+				}
+			}
+			m.mu.Unlock()
+		}
+
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.progress.Width = msg.Width - 10
+		if m.progress.Width > 80 {
+			m.progress.Width = 80
+		}
+
+	case tickMsg:
+		if m.quitting {
+			return m, nil
+		}
+		return m, tick()
+
+	case error:
+		m.err = msg
+		return m, nil
+	}
+
+	return m, nil
+}
+
+func (m *torrentModel) View() string {
+	if m.err != nil {
+		return errorStyle.Render(fmt.Sprintf("Error: %v", m.err))
+	}
+	if m.quitting {
+		return "Shutting down gracefully..."
+	}
+
+	var s strings.Builder
+
+	s.WriteString(titleStyle.Render("utorr Downloader"))
+	s.WriteString("\n")
+
+	var totalDone, totalSize int64
+	var totalDownRate, totalUpRate float64
+	now := time.Now()
+
+	for _, t := range m.torrents {
+		size := t.Length()
+		done := t.BytesCompleted()
+		st := t.Stats()
+
+		m.mu.Lock()
+		prev := m.ratePrev[t]
+		read := st.ConnStats.BytesReadData.Int64()
+		write := st.ConnStats.BytesWrittenData.Int64()
+		var downRate, upRate float64
+		if !prev.t.IsZero() {
+			dt := now.Sub(prev.t).Seconds()
+			if dt > 0 {
+				downRate = float64(read-prev.r) / dt
+				upRate = float64(write-prev.w) / dt
+			}
+		}
+		m.ratePrev[t] = rateState{t: now, r: read, w: write}
+		m.mu.Unlock()
+
+		totalDone += done
+		totalSize += size
+		totalDownRate += downRate
+		totalUpRate += upRate
+
+		name := t.Name()
+		if name == "" {
+			name = t.InfoHash().HexString()
+		}
+		pct := 0.0
+		if size > 0 {
+			pct = float64(done) / float64(size)
+		}
+
+		s.WriteString(fmt.Sprintf("%s\n", trimEllipsis(name, m.width-5)))
+		s.WriteString(fmt.Sprintf("%s %3.0f%%\n", m.progress.ViewAs(pct), pct*100))
+		s.WriteString(infoStyle.Render(fmt.Sprintf("D: %s/s  U: %s/s  Peers: %d/%d",
+			humanBytes(int64(downRate)), humanBytes(int64(upRate)),
+			st.ActivePeers, st.TotalPeers)))
+		s.WriteString("\n\n")
+	}
+
+	overall := 0.0
+	if totalSize > 0 {
+		overall = float64(totalDone) / float64(totalSize)
+	}
+
+	statusText := "RUNNING"
+	if m.paused {
+		statusText = "PAUSED"
+	}
+
+	s.WriteString(strings.Repeat("─", m.width))
+	s.WriteString("\n")
+	s.WriteString(fmt.Sprintf("TOTAL: %3.0f%%  D: %s/s  U: %s/s\n",
+		overall*100, humanBytes(int64(totalDownRate)), humanBytes(int64(totalUpRate))))
+	s.WriteString(fmt.Sprintf("Status: %s\n", statusStyle.Foreground(lipgloss.Color(statusColor(m.paused))).Render(statusText)))
+	s.WriteString(infoStyle.Render("\n[p]ause/resume  [q]uit"))
+
+	return s.String()
+}
+
+func statusColor(paused bool) string {
+	if paused {
+		return "#FFFF00" // Yellow
+	}
+	return "#00FF00" // Green
+}
+
+// --- Torrent Logic ---
+
 func main() {
 	var (
 		outDir      string
@@ -54,25 +212,22 @@ func main() {
 		disableIPv6 bool
 	)
 
-	flag.StringVar(&outDir, "o", "downloads", "Output/download directory")
-	flag.StringVar(&sessionDir, "session", "session", "Directory to store session/resume data")
+	flag.StringVar(&outDir, "o", "/utorr/downloads", "Output/download directory")
+	flag.StringVar(&sessionDir, "/utorr/session", "session", "Directory to store session/resume data")
 	flag.IntVar(&maxConns, "max-conns", 80, "Max established peer connections per torrent")
 	flag.BoolVar(&enableSeed, "seed", false, "Seed after download completes")
 	flag.BoolVar(&disableUTP, "disable-utp", false, "Disable uTP (Micro Transport Protocol)")
 	flag.BoolVar(&disableIPv6, "disable-ipv6", false, "Disable IPv6")
 	flag.Usage = func() {
 		name := filepath.Base(os.Args[0])
-		fmt.Fprintf(os.Stderr, "utorr - A secure, fast, multi-threaded torrent downloader with resume capabilities.\n\n")
+		fmt.Fprintf(os.Stderr, "utorr - A secure, fast, multi-threaded torrent downloader with a TUI.\n\n")
 		fmt.Fprintf(os.Stderr, "Usage:\n")
 		fmt.Fprintf(os.Stderr, "  %s [options] <magnet-link|torrent-file> [more...]\n\n", name)
 		fmt.Fprintf(os.Stderr, "Options:\n")
 		flag.PrintDefaults()
-		fmt.Fprintf(os.Stderr, "\nInteractive Commands:\n")
+		fmt.Fprintf(os.Stderr, "\nInteractive Commands (in TUI):\n")
 		fmt.Fprintf(os.Stderr, "  p  Toggle pause/resume for all torrents\n")
-		fmt.Fprintf(os.Stderr, "  q  Quit gracefully (resumable on next run)\n\n")
-		fmt.Fprintf(os.Stderr, "Examples:\n")
-		fmt.Fprintf(os.Stderr, "  %s \"magnet:?xt=urn:btih:...\"\n", name)
-		fmt.Fprintf(os.Stderr, "  %s -o ./downloads linux_distro.torrent\n", name)
+		fmt.Fprintf(os.Stderr, "  q  Quit gracefully\n\n")
 	}
 	flag.Parse()
 
@@ -86,15 +241,14 @@ func main() {
 	mustMkdirAll(sessionDir)
 
 	cfg := torrent.NewDefaultClientConfig()
-	cfg.NoUpload = !enableSeed // Do not upload by default for safety/privacy
-	cfg.DataDir = outDir       // Where content is stored
+	cfg.NoUpload = !enableSeed
+	cfg.DataDir = outDir
 	cfg.DisableIPv6 = disableIPv6
 	cfg.DisableUTP = disableUTP
 	cfg.Seed = enableSeed
 	cfg.HalfOpenConnsPerTorrent = 8
 	cfg.EstablishedConnsPerTorrent = maxConns
-	// Security-leaning defaults
-	cfg.AcceptPeerConnections = true // Allow incoming for better performance
+	cfg.AcceptPeerConnections = true
 
 	cl, err := torrent.NewClient(cfg)
 	if err != nil {
@@ -102,73 +256,48 @@ func main() {
 	}
 	defer cl.Close()
 
-	// Ctrl+C handling to ensure a clean shutdown and state persistence.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	var (
-		wg      sync.WaitGroup
-		added   []*torrent.Torrent
-		addErrs []error
-	)
-
+	var added []*torrent.Torrent
 	for _, in := range args {
 		t, e := addInput(ctx, cl, in)
-		if e != nil {
-			addErrs = append(addErrs, fmt.Errorf("%s: %w", in, e))
-			continue
+		if e == nil {
+			added = append(added, t)
+		} else {
+			fmt.Printf("Error adding %s: %v\n", in, e)
 		}
-		added = append(added, t)
 	}
+
 	if len(added) == 0 {
-		for _, e := range addErrs {
-			log.Println("add error:", e)
-		}
 		log.Fatal("no valid inputs added")
 	}
 
-	// Start fetching metadata if needed, then download all files.
 	for _, t := range added {
 		<-t.GotInfo()
-		// By default, download everything in the torrent.
 		t.DownloadAll()
-		// Apply per-torrent connection cap.
 		t.SetMaxEstablishedConns(maxConns)
 	}
 
-	// Progress display & interactive control.
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		progressLoop(ctx, added)
-	}()
-
-	// Simple stdin commands: 'p' to toggle pause for all, 'q' to quit gracefully.
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		interactiveLoop(ctx, added)
-	}()
-
-	// Wait for completion or signal.
-	allDone := make(chan struct{})
-	go func() {
-		for _, t := range added {
-			<-t.Complete().On() // waits until piece completion event fires
-		}
-		close(allDone)
-	}()
-
-	select {
-	case <-ctx.Done():
-		log.Println("received shutdown signal; saving state and exiting...")
-	case <-allDone:
-		log.Println("all torrents completed")
+	prog := progress.New(progress.WithDefaultGradient())
+	model := &torrentModel{
+		client:   cl,
+		torrents: added,
+		ratePrev: make(map[*torrent.Torrent]rateState),
+		progress: prog,
 	}
 
-	// Let goroutines finish up.
-	stop()
-	wg.Wait()
+	p := tea.NewProgram(model, tea.WithAltScreen())
+
+	// Run TUI in a separate goroutine if we want to handle signals here too,
+	// but Bubble Tea handles signals by default.
+	if _, err := p.Run(); err != nil {
+		fmt.Printf("Error running TUI: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Ensure graceful shutdown
+	fmt.Println("Shutting down gracefully, flushing data...")
 }
 
 func mustMkdirAll(p string) {
@@ -185,17 +314,15 @@ func addInput(ctx context.Context, cl *torrent.Client, in string) (*torrent.Torr
 	if isMagnet(in) {
 		return cl.AddMagnet(in)
 	}
-	// If it's a URL but not magnet, try parsing; we only support magnet or a local .torrent path here.
 	if _, err := url.ParseRequestURI(in); err == nil && !isMagnet(in) {
 		return nil, errors.New("only magnet: URIs or .torrent file paths are supported")
 	}
-	// Treat as file path.
 	st, err := os.Stat(in)
 	if err != nil {
 		return nil, err
 	}
 	if st.IsDir() {
-		return nil, fmt.Errorf("%s is a directory; provide a .torrent file inside or a magnet link", in)
+		return nil, fmt.Errorf("%s is a directory", in)
 	}
 	mi, err := metainfo.LoadFromFile(in)
 	if err != nil {
@@ -204,105 +331,18 @@ func addInput(ctx context.Context, cl *torrent.Client, in string) (*torrent.Torr
 	return cl.AddTorrent(mi)
 }
 
-func progressLoop(ctx context.Context, ts []*torrent.Torrent) {
-	tkr := time.NewTicker(1 * time.Second)
-	defer tkr.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-tkr.C:
-			printProgress(ts)
-		}
-	}
-}
-
-func printProgress(ts []*torrent.Torrent) {
-	var totalDone, totalSize int64
-	var totalDownRate, totalUpRate float64
-
-	rateMu.Lock()
-	now := time.Now()
-	for _, t := range ts {
-		size := t.Length()
-		done := t.BytesCompleted()
-		st := t.Stats()
-
-		// Compute per-torrent rates from byte counters.
-		prev := ratePrev[t]
-		read := st.ConnStats.BytesReadData.Int64()
-		write := st.ConnStats.BytesWrittenData.Int64()
-		var downRate, upRate float64
-		if !prev.t.IsZero() {
-			dt := now.Sub(prev.t).Seconds()
-			if dt > 0 {
-				downRate = float64(read-prev.r) / dt
-				upRate = float64(write-prev.w) / dt
-			}
-		}
-		ratePrev[t] = rateState{t: now, r: read, w: write}
-
-		totalDone += done
-		totalSize += size
-		totalDownRate += downRate
-		totalUpRate += upRate
-
-		name := t.Name()
-		if name == "" {
-			name = t.InfoHash().HexString()
-		}
-		pct := 0.0
-		if size > 0 {
-			pct = float64(done) / float64(size) * 100
-		}
-		fmt.Printf("[%s] %.1f%% - D: %s/s U: %s/s Peers: %d/%d\n",
-			trimEllipsis(name, 40), pct,
-			humanBytes(int64(downRate)), humanBytes(int64(upRate)),
-			st.ActivePeers, st.TotalPeers,
-		)
-	}
-	rateMu.Unlock()
-
-	overall := 0.0
-	if totalSize > 0 {
-		overall = float64(totalDone) / float64(totalSize) * 100
-	}
-	fmt.Printf("TOTAL: %.1f%% - D: %s/s U: %s/s\n\n", overall, humanBytes(int64(totalDownRate)), humanBytes(int64(totalUpRate)))
-}
-
 func trimEllipsis(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
 	r := []rune(s)
 	if len(r) <= n {
 		return s
 	}
-	return string(r[:n-1]) + "…"
-}
-
-func interactiveLoop(ctx context.Context, ts []*torrent.Torrent) {
-	in := bufio.NewReader(os.Stdin)
-	for {
-		fmt.Printf("Commands: [p]ause/resume all, [q]uit > ")
-		b, err := in.ReadByte()
-		if err != nil {
-			return
-		}
-		switch strings.ToLower(string(b)) {
-		case "p":
-			// Toggle pause across all torrents by allowing/disallowing data download.
-			for _, t := range ts {
-				if paused {
-					t.AllowDataDownload()
-				} else {
-					t.DisallowDataDownload()
-				}
-			}
-			paused = !paused
-		case "q":
-			return
-		default:
-			// ignore other keys including newlines
-		}
+	if n < 1 {
+		return ""
 	}
+	return string(r[:n-1]) + "…"
 }
 
 func humanBytes(n int64) string {
