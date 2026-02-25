@@ -20,6 +20,7 @@ import (
 	"github.com/charmbracelet/bubbles/progress"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	lumberjack "gopkg.in/natefinch/lumberjack.v2"
 )
 
 // --- Bubble Tea TUI ---
@@ -40,6 +41,10 @@ var (
 
 	statusStyle = lipgloss.NewStyle().
 			Bold(true)
+
+	footerStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#444444")).
+			Faint(true)
 )
 
 type tickMsg time.Time
@@ -61,6 +66,10 @@ type torrentModel struct {
 	ratePrev map[*torrent.Torrent]rateState
 	progress progress.Model
 	mu       sync.Mutex
+}
+
+type addTorrentMsg struct {
+	t *torrent.Torrent
 }
 
 type rateState struct {
@@ -105,6 +114,12 @@ func (m *torrentModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, tick()
+
+	case addTorrentMsg:
+		m.mu.Lock()
+		m.torrents = append(m.torrents, msg.t)
+		m.mu.Unlock()
+		return m, nil
 
 	case error:
 		m.err = msg
@@ -190,7 +205,10 @@ func (m *torrentModel) View() string {
 	s.WriteString(fmt.Sprintf("TOTAL: %3.0f%%  D: %s/s  U: %s/s\n",
 		overall*100, humanBytes(int64(totalDownRate)), humanBytes(int64(totalUpRate))))
 	s.WriteString(fmt.Sprintf("Status: %s\n", statusStyle.Foreground(lipgloss.Color(statusColor(m.paused, overall >= 1.0))).Render(statusText)))
-	s.WriteString(infoStyle.Render("\n[p]ause/resume  [q]uit"))
+	s.WriteString(infoStyle.Render("\n[p]ause/resume  [q]uit\n"))
+
+	footer := fmt.Sprintf("© %d Wisdom Jere Github@izzjere", now.Year())
+	s.WriteString(footerStyle.Render(footer))
 
 	return s.String()
 }
@@ -211,14 +229,18 @@ func main() {
 	var (
 		outDir      string
 		sessionDir  string
+		inputDir    string
+		logFile     string
 		maxConns    int
 		enableSeed  bool
 		disableUTP  bool
 		disableIPv6 bool
 	)
 
-	flag.StringVar(&outDir, "o", "/utorr/downloads", "Output/download directory")
-	flag.StringVar(&sessionDir, "session", "/utorr/session", "Directory to store session/resume data")
+	flag.StringVar(&outDir, "o", "downloads", "Output/download directory")
+	flag.StringVar(&sessionDir, "session", "session", "Directory to store session/resume data")
+	flag.StringVar(&inputDir, "input", "input", "Input directory for new .torrent or .magnet files")
+	flag.StringVar(&logFile, "log", "logs/utorr.log", "Path to log file")
 	flag.IntVar(&maxConns, "max-conns", 80, "Max established peer connections per torrent")
 	flag.BoolVar(&enableSeed, "seed", false, "Seed after download completes")
 	flag.BoolVar(&disableUTP, "disable-utp", false, "Disable uTP (Micro Transport Protocol)")
@@ -227,7 +249,7 @@ func main() {
 		name := filepath.Base(os.Args[0])
 		fmt.Fprintf(os.Stderr, "utorr - A secure, fast, multi-threaded torrent downloader with a TUI.\n\n")
 		fmt.Fprintf(os.Stderr, "Usage:\n")
-		fmt.Fprintf(os.Stderr, "  %s [options] <magnet-link|torrent-file> [more...]\n\n", name)
+		fmt.Fprintf(os.Stderr, "  %s [options] [magnet-link|torrent-file ...]\n\n", name)
 		fmt.Fprintf(os.Stderr, "Options:\n")
 		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, "\nInteractive Commands (in TUI):\n")
@@ -235,15 +257,26 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  q  Quit gracefully\n\n")
 	}
 	flag.Parse()
-
 	args := flag.Args()
-	if len(args) == 0 {
-		flag.Usage()
-		os.Exit(2)
+
+	// Set up logging
+	if logFile != "" {
+		lj := &lumberjack.Logger{
+			Filename:   logFile,
+			MaxSize:    10,   // megabytes
+			MaxBackups: 7,    // keep 7 days of logs
+			MaxAge:     28,   // days
+			Compress:   true, // disabled by default
+			LocalTime:  true,
+		}
+		log.SetOutput(lj)
+		log.SetFlags(log.LstdFlags | log.Lshortfile)
 	}
+	log.Println("Starting utorr...")
 
 	mustMkdirAll(outDir)
 	mustMkdirAll(sessionDir)
+	mustMkdirAll(inputDir)
 
 	cfg := torrent.NewDefaultClientConfig()
 	cfg.NoUpload = !enableSeed
@@ -269,19 +302,19 @@ func main() {
 		t, e := addInput(ctx, cl, in)
 		if e == nil {
 			added = append(added, t)
+			log.Printf("Added torrent from command line: %s", in)
 		} else {
-			fmt.Printf("Error adding %s: %v\n", in, e)
+			log.Printf("Error adding %s: %v", in, e)
 		}
 	}
 
-	if len(added) == 0 {
-		log.Fatal("no valid inputs added")
-	}
-
 	for _, t := range added {
-		<-t.GotInfo()
-		t.DownloadAll()
-		t.SetMaxEstablishedConns(maxConns)
+		go func(t *torrent.Torrent) {
+			<-t.GotInfo()
+			t.DownloadAll()
+			t.SetMaxEstablishedConns(maxConns)
+			log.Printf("Started downloading: %s", t.Name())
+		}(t)
 	}
 
 	prog := progress.New(progress.WithDefaultGradient())
@@ -294,8 +327,8 @@ func main() {
 
 	p := tea.NewProgram(model, tea.WithAltScreen())
 
-	// Run TUI in a separate goroutine if we want to handle signals here too,
-	// but Bubble Tea handles signals by default.
+	// Start input directory goroutine
+	go watchInputDirectory(ctx, cl, inputDir, p, maxConns)
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("Error running TUI: %v\n", err)
 		os.Exit(1)
@@ -338,6 +371,81 @@ func addInput(ctx context.Context, cl *torrent.Client, in string) (*torrent.Torr
 		return nil, fmt.Errorf("loading metainfo: %w", err)
 	}
 	return cl.AddTorrent(mi)
+}
+
+func watchInputDirectory(ctx context.Context, cl *torrent.Client, inputDir string, p *tea.Program, maxConns int) {
+	processed := make(map[string]bool)
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			files, err := os.ReadDir(inputDir)
+			if err != nil {
+				log.Printf("Error reading input directory: %v", err)
+				continue
+			}
+
+			for _, f := range files {
+				if f.IsDir() {
+					continue
+				}
+				path := filepath.Join(inputDir, f.Name())
+				if processed[path] {
+					continue
+				}
+
+				ext := strings.ToLower(filepath.Ext(f.Name()))
+				if ext == ".torrent" || ext == ".magnet" {
+					log.Printf("Found new file in input directory: %s", f.Name())
+					var t *torrent.Torrent
+					var e error
+
+					if ext == ".torrent" {
+						mi, err := metainfo.LoadFromFile(path)
+						if err != nil {
+							log.Printf("Error loading metainfo from %s: %v", path, err)
+							processed[path] = true
+							continue
+						}
+						t, e = cl.AddTorrent(mi)
+					} else {
+						// .magnet file is expected to contain a magnet link
+						data, err := os.ReadFile(path)
+						if err != nil {
+							log.Printf("Error reading magnet file %s: %v", path, err)
+							processed[path] = true
+							continue
+						}
+						magnet := strings.TrimSpace(string(data))
+						if !isMagnet(magnet) {
+							log.Printf("Invalid magnet link in %s", path)
+							processed[path] = true
+							continue
+						}
+						t, e = cl.AddMagnet(magnet)
+					}
+
+					if e != nil {
+						log.Printf("Error adding torrent from %s: %v", path, e)
+					} else {
+						log.Printf("Added torrent from input directory: %s", path)
+						go func(t *torrent.Torrent) {
+							<-t.GotInfo()
+							t.DownloadAll()
+							t.SetMaxEstablishedConns(maxConns)
+							log.Printf("Started downloading (input): %s", t.Name())
+						}(t)
+						p.Send(addTorrentMsg{t: t})
+					}
+					processed[path] = true
+				}
+			}
+		}
+	}
 }
 
 func trimEllipsis(s string, n int) string {

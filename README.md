@@ -41,10 +41,22 @@ make
 
 - `-o <dir>`: Output directory (default: `downloads`)
 - `-session <dir>`: Session data directory (default: `session`)
+- `-input <dir>`: Input directory for new .torrent/.magnet files (default: `input`)
+- `-log <file>`: Path to log file (default: `utorr.log`)
 - `-max-conns <n>`: Max peer connections (default: 80)
 - `-seed`: Seed after completion
 - `-disable-utp`: Disable uTP
 - `-disable-ipv6`: Disable IPv6
+
+### Multi-File & Input Directory
+
+The downloader now supports adding torrents dynamically while it's running:
+1. **Start without arguments**: You can run `./builds/utorr` without any magnet links or files.
+2. **Input directory**: Simply drop a `.torrent` file or a `.magnet` text file (containing a magnet link) into the `input/` directory. The downloader will automatically detect and start downloading them.
+
+### Error Handling & Logging
+
+All significant events (adding torrents, start of download, errors) are logged to `utorr.log` (or your custom log file) to keep the TUI clean.
 
 ### Interactive Commands
 
@@ -56,8 +68,5 @@ During download:
 ![img.png](img.png)
 
 ### What's Next?
-1. Multi-file downloads
-2. Magnet link parsing and handling
-3. Support for multiple trackers per torrent
-4. Enhanced error handling and logging
-5. Integration with a web UI for remote control
+1. Integration with a web UI for remote control
+2. Docker support for easy deployment

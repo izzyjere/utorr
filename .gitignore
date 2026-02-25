@@ -6,6 +6,8 @@ utorr.exe
 # Torrent Data
 downloads/
 session/
+input/
+logs/
 
 # IDE settings
 .idea/
@@ -14,4 +16,5 @@ session/
 vendor/
 *.test
 *.out
+*.log
 cover.out
