@@ -38,7 +38,7 @@ jobs:
       - name: Build
         run: |
           mkdir -p builds
-          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 go build -v -o "builds/${{ matrix.artifact_name }}" .
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 go build -v -ldflags="-s -w" -o "builds/${{ matrix.artifact_name }}" .
 
       - name: Upload Release Asset
         uses: softprops/action-gh-release@v2

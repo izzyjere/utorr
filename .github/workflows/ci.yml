@@ -35,4 +35,4 @@ jobs:
           go-version: '1.24'
 
       - name: Build Check
-        run: CGO_ENABLED=0 go build -v .
+        run: CGO_ENABLED=0 go build -v -ldflags="-s -w" .
