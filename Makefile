@@ -16,7 +16,7 @@ all: build
 
 build: clean
 	@mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=0 go build -ldflags="-s -w" -o $(BUILD_DIR)/$(BINARY_EXE) .
+	CGO_ENABLED=1 go build -ldflags="-s -w" -o $(BUILD_DIR)/$(BINARY_EXE) .
 
 clean:
 	@rm -rf $(BUILD_DIR)
