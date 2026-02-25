@@ -2,6 +2,7 @@
 
 BINARY_NAME=utorr
 BUILD_DIR=builds
+CGO_ENABLED?=0
 
 # OS detection for .exe extension on Windows
 ifeq ($(OS),Windows_NT)
@@ -16,7 +17,7 @@ all: build
 
 build: clean
 	@mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=1 go build -ldflags="-s -w" -o $(BUILD_DIR)/$(BINARY_EXE) .
+	CGO_ENABLED=$(CGO_ENABLED) go build -ldflags="-s -w" -o $(BUILD_DIR)/$(BINARY_EXE) .
 
 clean:
 	@rm -rf $(BUILD_DIR)

@@ -10,8 +10,11 @@ Ensure you have Go 1.24+ installed.
 # Fetch dependencies
 go mod tidy
 
-# Build the project
+# Build the project (defaults to CGO_ENABLED=0 for portability)
 make
+
+# Build with CGO enabled (e.g., if you need native SQLite or other C features)
+make CGO_ENABLED=1
 ```
 
 ## Usage
