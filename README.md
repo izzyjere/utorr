@@ -52,6 +52,12 @@ During download:
 - `p`: Toggle pause/resume
 - `q`: Quit gracefully (state is saved)
 
-## Why is `go run .` slow?
+### Demo
+![img.png](img.png)
 
-`go run` compiles the entire project and its many dependencies (including WebRTC and DHT stacks) every time it is executed. For the fastest experience, especially when just viewing help info, always use the compiled binary in the `builds/` directory.
+### What's Next?
+1. Multi-file downloads
+2. Magnet link parsing and handling
+3. Support for multiple trackers per torrent
+4. Enhanced error handling and logging
+5. Integration with a web UI for remote control
