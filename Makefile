@@ -14,7 +14,7 @@ endif
 
 all: build
 
-build:
+build: clean
 	@mkdir -p $(BUILD_DIR)
 	CGO_ENABLED=0 go build -o $(BUILD_DIR)/$(BINARY_EXE) .
 
