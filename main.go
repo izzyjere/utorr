@@ -248,14 +248,14 @@ func main() {
 	flag.BoolVar(&disableIPv6, "disable-ipv6", false, "Disable IPv6")
 	flag.Usage = func() {
 		name := filepath.Base(os.Args[0])
-		fmt.Fprintf(os.Stderr, "utorr - A secure, fast, multi-threaded torrent downloader with a TUI.\n\n")
-		fmt.Fprintf(os.Stderr, "Usage:\n")
-		fmt.Fprintf(os.Stderr, "  %s [options] [magnet-link|torrent-file ...]\n\n", name)
-		fmt.Fprintf(os.Stderr, "Options:\n")
+		_, _ = fmt.Fprintf(os.Stderr, "utorr - A secure, fast, multi-threaded torrent downloader with a TUI.\n\n")
+		_, _ = fmt.Fprintf(os.Stderr, "Usage:\n")
+		_, _ = fmt.Fprintf(os.Stderr, "  %s [options] [magnet-link|torrent-file ...]\n\n", name)
+		_, _ = fmt.Fprintf(os.Stderr, "Options:\n")
 		flag.PrintDefaults()
-		fmt.Fprintf(os.Stderr, "\nInteractive Commands (in TUI):\n")
-		fmt.Fprintf(os.Stderr, "  p  Toggle pause/resume for all torrents\n")
-		fmt.Fprintf(os.Stderr, "  q  Quit gracefully\n\n")
+		_, _ = fmt.Fprintf(os.Stderr, "\nInteractive Commands (in TUI):\n")
+		_, _ = fmt.Fprintf(os.Stderr, "  p  Toggle pause/resume for all torrents\n")
+		_, _ = fmt.Fprintf(os.Stderr, "  q  Quit gracefully\n\n")
 	}
 	flag.Parse()
 	args := flag.Args()
@@ -461,9 +461,6 @@ func trimEllipsis(s string, n int) string {
 	r := []rune(s)
 	if len(r) <= n {
 		return s
-	}
-	if n < 1 {
-		return ""
 	}
 	return string(r[:n-1]) + "…"
 }
