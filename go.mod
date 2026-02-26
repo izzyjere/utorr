@@ -3,10 +3,12 @@ module utorr
 go 1.24.2
 
 require (
+	github.com/anacrolix/log v0.17.1-0.20251118025802-918f1157b7bb
 	github.com/anacrolix/torrent v1.61.0
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )
 
 require (
@@ -18,7 +20,6 @@ require (
 	github.com/anacrolix/envpprof v1.4.0 // indirect
 	github.com/anacrolix/generics v0.1.1-0.20251125230353-15d98d46693b // indirect
 	github.com/anacrolix/go-libutp v1.3.2 // indirect
-	github.com/anacrolix/log v0.17.1-0.20251118025802-918f1157b7bb // indirect
 	github.com/anacrolix/missinggo v1.3.0 // indirect
 	github.com/anacrolix/missinggo/perf v1.0.0 // indirect
 	github.com/anacrolix/missinggo/v2 v2.10.0 // indirect
@@ -57,7 +58,6 @@ require (
 	github.com/huandu/xstrings v1.3.2 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.3 // indirect
 	github.com/lucasb-eyer/go-colorful v1.3.0 // indirect
-	github.com/lxi1400/GoTitle v0.0.0-20210314075355-9d4645c96c0e // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-localereader v0.0.1 // indirect
 	github.com/mattn/go-runewidth v0.0.19 // indirect
@@ -106,7 +106,6 @@ require (
 	golang.org/x/sys v0.38.0 // indirect
 	golang.org/x/text v0.31.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
-	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	lukechampine.com/blake3 v1.1.6 // indirect
 	modernc.org/libc v1.22.3 // indirect
 	modernc.org/mathutil v1.5.0 // indirect

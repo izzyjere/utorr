@@ -22,7 +22,6 @@ import (
 	"github.com/charmbracelet/bubbles/progress"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/lxi1400/GoTitle"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
@@ -241,7 +240,6 @@ func main() {
 		disableUTP   bool
 		disableIPv6  bool
 	)
-	_, _ = title.SetTitle("utorr Downloader")
 
 	flag.StringVar(&outDir, "o", "downloads", "Output/download directory")
 	flag.StringVar(&sessionDir, "session", "session", "Directory to store session/resume data")
