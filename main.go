@@ -18,10 +18,12 @@ import (
 	alog "github.com/anacrolix/log"
 	"github.com/anacrolix/torrent"
 	"github.com/anacrolix/torrent/metainfo"
+	"github.com/anacrolix/torrent/storage"
 	"github.com/charmbracelet/bubbles/progress"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	lumberjack "gopkg.in/natefinch/lumberjack.v2"
+	"github.com/lxi1400/GoTitle"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 // --- Bubble Tea TUI ---
@@ -228,19 +230,24 @@ func statusColor(paused bool, completed bool) string {
 
 func main() {
 	var (
-		outDir      string
-		sessionDir  string
-		inputDir    string
-		logFile     string
-		maxConns    int
-		enableSeed  bool
-		disableUTP  bool
-		disableIPv6 bool
+		outDir       string
+		sessionDir   string
+		inputDir     string
+		progressDir  string
+		completedDir string
+		logFile      string
+		maxConns     int
+		enableSeed   bool
+		disableUTP   bool
+		disableIPv6  bool
 	)
+	_, _ = title.SetTitle("utorr Downloader")
 
 	flag.StringVar(&outDir, "o", "downloads", "Output/download directory")
 	flag.StringVar(&sessionDir, "session", "session", "Directory to store session/resume data")
 	flag.StringVar(&inputDir, "input", "input", "Input directory for new .torrent or .magnet files")
+	flag.StringVar(&progressDir, "progress", "progress", "Directory for files in progress")
+	flag.StringVar(&completedDir, "completed", "completed", "Directory for completed .torrent/.magnet files")
 	flag.StringVar(&logFile, "log", "logs/utorr.log", "Path to log file")
 	flag.IntVar(&maxConns, "max-conns", 80, "Max established peer connections per torrent")
 	flag.BoolVar(&enableSeed, "seed", false, "Seed after download completes")
@@ -277,6 +284,8 @@ func main() {
 	mustMkdirAll(outDir)
 	mustMkdirAll(sessionDir)
 	mustMkdirAll(inputDir)
+	mustMkdirAll(progressDir)
+	mustMkdirAll(completedDir)
 
 	cfg := torrent.NewDefaultClientConfig()
 	cfg.NoUpload = !enableSeed
@@ -294,6 +303,18 @@ func main() {
 		Fmt: alog.LineFormatter,
 	})
 	cfg.Logger = torrentLogger
+
+	// Configure persistent storage for resume data
+	pc, err := storage.NewBoltPieceCompletion(sessionDir)
+	if err != nil {
+		log.Printf("Error creating piece completion: %v, using default", err)
+	} else {
+		// NewFileOpts expects NewFileClientOpts which implements ClientImplCloser
+		cfg.DefaultStorage = storage.NewFileOpts(storage.NewFileClientOpts{
+			ClientBaseDir:   outDir,
+			PieceCompletion: pc,
+		})
+	}
 
 	cl, err := torrent.NewClient(cfg)
 	if err != nil {
@@ -334,7 +355,7 @@ func main() {
 	p := tea.NewProgram(model, tea.WithAltScreen())
 
 	// Start input directory goroutine
-	go watchInputDirectory(ctx, cl, inputDir, p, maxConns)
+	go watchInputDirectory(ctx, cl, inputDir, progressDir, completedDir, p, maxConns)
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("Error running TUI: %v\n", err)
 		os.Exit(1)
@@ -379,10 +400,31 @@ func addInput(ctx context.Context, cl *torrent.Client, in string) (*torrent.Torr
 	return cl.AddTorrent(mi)
 }
 
-func watchInputDirectory(ctx context.Context, cl *torrent.Client, inputDir string, p *tea.Program, maxConns int) {
+func watchInputDirectory(ctx context.Context, cl *torrent.Client, inputDir, progressDir, completedDir string, p *tea.Program, maxConns int) {
 	processed := make(map[string]bool)
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
+
+	// 1. Initial scan of progress directory to resume files
+	progressFiles, err := os.ReadDir(progressDir)
+	if err == nil {
+		for _, f := range progressFiles {
+			if f.IsDir() {
+				continue
+			}
+			path := filepath.Join(progressDir, f.Name())
+			ext := strings.ToLower(filepath.Ext(f.Name()))
+			if ext == ".torrent" || ext == ".magnet" {
+				t, e := addFile(cl, path, ext)
+				if e == nil {
+					log.Printf("Resumed torrent from progress directory: %s", path)
+					startTorrent(t, maxConns, path, progressDir, completedDir, p)
+				} else {
+					log.Printf("Error resuming %s: %v", path, e)
+				}
+			}
+		}
+	}
 
 	for {
 		select {
@@ -407,51 +449,83 @@ func watchInputDirectory(ctx context.Context, cl *torrent.Client, inputDir strin
 				ext := strings.ToLower(filepath.Ext(f.Name()))
 				if ext == ".torrent" || ext == ".magnet" {
 					log.Printf("Found new file in input directory: %s", f.Name())
-					var t *torrent.Torrent
-					var e error
-
-					if ext == ".torrent" {
-						mi, err := metainfo.LoadFromFile(path)
-						if err != nil {
-							log.Printf("Error loading metainfo from %s: %v", path, err)
-							processed[path] = true
-							continue
-						}
-						t, e = cl.AddTorrent(mi)
-					} else {
-						// .magnet file is expected to contain a magnet link
-						data, err := os.ReadFile(path)
-						if err != nil {
-							log.Printf("Error reading magnet file %s: %v", path, err)
-							processed[path] = true
-							continue
-						}
-						magnet := strings.TrimSpace(string(data))
-						if !isMagnet(magnet) {
-							log.Printf("Invalid magnet link in %s", path)
-							processed[path] = true
-							continue
-						}
-						t, e = cl.AddMagnet(magnet)
-					}
+					t, e := addFile(cl, path, ext)
 
 					if e != nil {
 						log.Printf("Error adding torrent from %s: %v", path, e)
 					} else {
+						// Move to progress folder
+						newPath := filepath.Join(progressDir, f.Name())
+						if err := os.Rename(path, newPath); err != nil {
+							log.Printf("Error moving %s to %s: %v", path, newPath, err)
+							// If move fails, we still proceed but it won't be resumable correctly if app restarts before next move
+						} else {
+							path = newPath
+						}
+
 						log.Printf("Added torrent from input directory: %s", path)
-						go func(t *torrent.Torrent) {
-							<-t.GotInfo()
-							t.DownloadAll()
-							t.SetMaxEstablishedConns(maxConns)
-							log.Printf("Started downloading (input): %s", t.Name())
-						}(t)
-						p.Send(addTorrentMsg{t: t})
+						startTorrent(t, maxConns, path, progressDir, completedDir, p)
 					}
 					processed[path] = true
 				}
 			}
 		}
 	}
+}
+
+func addFile(cl *torrent.Client, path string, ext string) (*torrent.Torrent, error) {
+	if ext == ".torrent" {
+		mi, err := metainfo.LoadFromFile(path)
+		if err != nil {
+			return nil, err
+		}
+		return cl.AddTorrent(mi)
+	} else {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		magnet := strings.TrimSpace(string(data))
+		if !isMagnet(magnet) {
+			return nil, fmt.Errorf("invalid magnet link in %s", path)
+		}
+		return cl.AddMagnet(magnet)
+	}
+}
+
+func startTorrent(t *torrent.Torrent, maxConns int, sourcePath string, progressDir string, completedDir string, p *tea.Program) {
+	go func() {
+		<-t.GotInfo()
+		t.DownloadAll()
+		t.SetMaxEstablishedConns(maxConns)
+		log.Printf("Started downloading: %s", t.Name())
+
+		// Monitor completion
+		go func() {
+			ticker := time.NewTicker(5 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-t.Closed():
+					return
+				case <-ticker.C:
+					if t.BytesCompleted() == t.Length() {
+						log.Printf("Torrent completed: %s", t.Name())
+						// Move source file to completed folder
+						fileName := filepath.Base(sourcePath)
+						destPath := filepath.Join(completedDir, fileName)
+						if err := os.Rename(sourcePath, destPath); err != nil {
+							log.Printf("Error moving completed source %s to %s: %v", sourcePath, destPath, err)
+						} else {
+							log.Printf("Moved completed source to: %s", destPath)
+						}
+						return
+					}
+				}
+			}
+		}()
+	}()
+	p.Send(addTorrentMsg{t: t})
 }
 
 func trimEllipsis(s string, n int) string {
