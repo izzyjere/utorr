@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	alog "github.com/anacrolix/log"
 	"github.com/anacrolix/torrent"
 	"github.com/anacrolix/torrent/metainfo"
 	"github.com/charmbracelet/bubbles/progress"
@@ -258,20 +259,19 @@ func main() {
 	}
 	flag.Parse()
 	args := flag.Args()
-
-	// Set up logging
-	if logFile != "" {
-		lj := &lumberjack.Logger{
-			Filename:   logFile,
-			MaxSize:    10,   // megabytes
-			MaxBackups: 7,    // keep 7 days of logs
-			MaxAge:     28,   // days
-			Compress:   true, // disabled by default
-			LocalTime:  true,
-		}
-		log.SetOutput(lj)
-		log.SetFlags(log.LstdFlags | log.Lshortfile)
+	if logFile == "" {
+		logFile = "logs/utorr.log"
 	}
+	logger := &lumberjack.Logger{
+		Filename:   logFile,
+		MaxSize:    10,   // megabytes
+		MaxBackups: 7,    // keep 7 days of logs
+		MaxAge:     28,   // days
+		Compress:   true, // disabled by default
+		LocalTime:  true,
+	}
+	log.SetOutput(logger)
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	log.Println("Starting utorr...")
 
 	mustMkdirAll(outDir)
@@ -288,12 +288,18 @@ func main() {
 	cfg.EstablishedConnsPerTorrent = maxConns
 	cfg.AcceptPeerConnections = true
 
+	torrentLogger := alog.NewLogger()
+	torrentLogger.SetHandlers(alog.StreamHandler{
+		W:   logger,
+		Fmt: alog.LineFormatter,
+	})
+	cfg.Logger = torrentLogger
+
 	cl, err := torrent.NewClient(cfg)
 	if err != nil {
 		log.Fatalf("failed creating client: %v", err)
 	}
 	// Note: We'll close this client explicitly at the end of main() to ensure all data is flushed.
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
