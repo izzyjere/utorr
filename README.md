@@ -21,9 +21,9 @@ make CGO_ENABLED=1
 
 ## Usage
 
-# Run
-./utorr [options] <magnet|file>
-```
+Copy the downloaded binary to a directory of your choice e.g C:\utorr
+
+You can run the app by double clicking it or inside a terminal if you want to customize options.
 
 ### UI & Performance Notes
 
