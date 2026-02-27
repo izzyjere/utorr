@@ -4,7 +4,9 @@ A secure, fast, multi-threaded torrent downloader with resume capabilities.
 
 ## Installation
 
-Ensure you have Go 1.24+ installed.
+Just download the pre built binaries from the release section or build your own binaries 👇🏾
+
+Ensure you have Go 1.24+ and (make)installed.
 
 ```bash
 # Fetch dependencies
@@ -19,14 +21,8 @@ make CGO_ENABLED=1
 
 ## Usage
 
-For best performance and a clean UI, use the compiled binary:
-
-```bash
-# Build (one-time or after changes)
-make
-
 # Run
-./builds/utorr [options] <magnet|file>
+./utorr [options] <magnet|file>
 ```
 
 ### UI & Performance Notes
