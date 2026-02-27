@@ -4,7 +4,7 @@ A secure, fast, multi-threaded torrent downloader with resume capabilities.
 
 ## Installation
 
-Just download the pre built binaries from the release section or build your own binaries 👇🏾
+Just download the pre built binaries from the [releases](https://github.com/izzyjere/utorr/releases/)  section or build your own binaries 👇🏾
 
 Ensure you have Go 1.24+ and (make)installed.
 
