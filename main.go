@@ -235,6 +235,7 @@ func main() {
 		progressDir  string
 		completedDir string
 		logFile      string
+		debug        bool
 		maxConns     int
 		enableSeed   bool
 		disableUTP   bool
@@ -247,6 +248,7 @@ func main() {
 	flag.StringVar(&progressDir, "progress", "progress", "Directory for files in progress")
 	flag.StringVar(&completedDir, "completed", "completed", "Directory for completed .torrent/.magnet files")
 	flag.StringVar(&logFile, "log", "logs/utorr.log", "Path to log file")
+	flag.BoolVar(&debug, "debug", false, "Enable debug logging")
 	flag.IntVar(&maxConns, "max-conns", 80, "Max established peer connections per torrent")
 	flag.BoolVar(&enableSeed, "seed", false, "Seed after download completes")
 	flag.BoolVar(&disableUTP, "disable-utp", false, "Disable uTP (Micro Transport Protocol)")
@@ -300,6 +302,11 @@ func main() {
 		W:   logger,
 		Fmt: alog.LineFormatter,
 	})
+	level := alog.Info
+	if debug {
+		level = alog.Debug
+	}
+	torrentLogger = torrentLogger.WithDefaultLevel(level)
 	cfg.Logger = torrentLogger
 
 	// Configure persistent storage for resume data
